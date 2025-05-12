@@ -4,6 +4,15 @@ const bodyParser = require('body-parser');
 require('dotenv').config();
 const cors = require('cors');
 const morgan = require('morgan');
+const AppError = require('./appError');
+
+const createAndWhere = (opt) => {
+    return opt.length > 1
+        ? {
+            [Op.and]: [...opt],
+        }
+        : opt[0]
+}
 
 const app = express();
 app.use(bodyParser.json());
@@ -56,6 +65,10 @@ const OrderItem = sequelize.define('OrderItem', {
   quantity: { type: DataTypes.INTEGER, defaultValue: 1 }
 });
 
+const Category = sequelize.define('Category', {
+    name: { type: DataTypes.STRING }
+} );
+
 User.hasMany(Order);
 Order.belongsTo(User);
 
@@ -64,6 +77,9 @@ OrderItem.belongsTo(Order);
 
 Product.hasMany(OrderItem);
 OrderItem.belongsTo(Product);
+
+Category.hasMany(Product);
+Product.belongsTo(Category);
 
 // Senkronizasyon
 sequelize.sync({ alter: true }).then(() => console.log("DB Synced"));
@@ -83,6 +99,8 @@ app.post('/login', async (req, res) => {
 try {
   const { email, password } = req.body;
   const user = await User.findOne({ where: { email },include:[{model:Order, include:[{model: OrderItem,include:[{model:Product}]}]}] });
+  if(!user) res.status(500).send({message:"Hatalı kullanıcı adı veya şifre"})
+  if (user && user.password !== password ) res.status(500).send({message:"Hatalı şifre"})
   if (user && user.password === password ) res.json(user);
 } catch (error) {
     console.log(error)
@@ -101,14 +119,20 @@ app.post('/products', async (req, res) => {
 
 app.get('/products', async (req, res) => {
   try {
-    const { search } = req.query;
 
-    const whereCondition = search
-      ? { name: { [Op.iLike]: `%${search}%` } }
-      : {};
+    const opt = [];
+    const { search, categoryId } = req.query;
+
+    if(search) {
+        opt.push({ name: { [Op.iLike]: `%${search}%` } })
+    }
+
+    if(categoryId) {
+        opt.push({ CategoryId: parseInt(categoryId) })
+    }
 
     const products = await Product.findAll({
-      where: whereCondition,
+      where: createAndWhere(opt),
     });
 
     res.json(products);
@@ -299,6 +323,29 @@ app.post('/admin/orders/:id/details', async (req, res) => {
   }
 });
 
+app.get('/admin/category', async (req, res) => {
+  try {
+   const category = await Category.findAll();
+
+    res.json(category);
+
+  } catch (error) {
+    console.log(error)
+  }
+ });
+
+app.post('/admin/category', async (req, res) => {
+  try {
+   const { categoryName } = req.body;
+   await Category.create({ name: categoryName || "" });
+
+  res.json({ message: 'Category created successfully' });
+
+  } catch (error) {
+    console.log(error)
+  }
+ });
+
 // 👤 Kullanıcının Profil ve Sipariş Geçmişi
 app.get('/profile/:userId', async (req, res) => {
     const { userId } = req.params;
@@ -338,7 +385,6 @@ app.get('/profile/:userId', async (req, res) => {
       res.status(500).json({ message: 'Error updating user' });
     }
   });
-
 
 
 // Sunucuyu başlat
